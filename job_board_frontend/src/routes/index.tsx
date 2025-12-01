@@ -3,13 +3,14 @@ import {
   useSignal,
   useVisibleTask$,
   $,
+  type QRL,
 } from "@builder.io/qwik";
 import type { DocumentHead } from "@builder.io/qwik-city";
 import Header from "~/components/Header";
 import FilterSidebar, { type FilterState } from "~/components/FilterSidebar";
 import JobCard from "~/components/JobCard";
 import NewJobModal from "~/components/NewJobModal";
-import { fetchJobs$, postJob$, type Job } from "~/services/jobs";
+import { fetchJobs$, postJobFromUi$, type Job } from "~/services/jobs";
 
 // PUBLIC_INTERFACE
 export default component$(() => {
@@ -18,19 +19,35 @@ export default component$(() => {
   const filters = useSignal<FilterState>({ keyword: "", location: "", type: "" });
   const modalOpen = useSignal<boolean>(false);
   const loading = useSignal<boolean>(true);
+  // Holds the most recent job submission payload in a serializable store
+  const pendingJob = useSignal<{
+    title: string;
+    company: string;
+    location: string;
+    type: Job["type"];
+    description: string;
+  } | null>(null);
+
+  // QRL helpers to read/write without capturing the signal identifier in other QRLs
+  const getPendingJob = $(() => pendingJob.value);
+  const clearPendingJob = $(() => {
+    pendingJob.value = null;
+  });
 
   // Load jobs with mock fallback when needed
   useVisibleTask$(() => {
     loading.value = true;
-    // Avoid capturing AbortSignal to satisfy Qwik QRL serialization
+    // Derive data within this task without capturing non-serializable locals
     queueMicrotask(() => {
-      fetchJobs$().then((data) => {
-        jobs.value = data;
-        filtered.value = applyFilters(data, filters.value);
-        loading.value = false;
-      }).catch(() => {
-        loading.value = false;
-      });
+      fetchJobs$()
+        .then((data) => {
+          jobs.value = data;
+          filtered.value = applyFilters(data, filters.value);
+          loading.value = false;
+        })
+        .catch(() => {
+          loading.value = false;
+        });
     });
   });
 
@@ -39,20 +56,25 @@ export default component$(() => {
     filtered.value = applyFilters(jobs.value, value);
   });
 
-  const openModal = $(() => (modalOpen.value = true));
-  const closeModal = $(() => (modalOpen.value = false));
+  const openModal = $(() => {
+    modalOpen.value = true;
+  });
+  const closeModal = $(() => {
+    modalOpen.value = false;
+  });
 
-  const submitNewJob = $(async (payload: {
-    title: string;
-    company: string;
-    location: string;
-    type: Job["type"];
-    description: string;
-  }) => {
-    // Post via service (mock if no API)
-    const created = await postJob$(payload);
+  // Handler is wrapped in $() and derives any needed values within the QRL.
+  // It calls the service QRL postJob$ with the data provided by the caller (NewJobModal),
+  // avoiding capturing any external "payload" object directly in the closure.
+  const submitNewJob: QRL<() => Promise<void>> = $(async () => {
+    const current = await getPendingJob();
+    if (!current) return;
+
+    const created = await postJobFromUi$(current);
     jobs.value = [created, ...jobs.value];
     filtered.value = applyFilters(jobs.value, filters.value);
+
+    await clearPendingJob();
   });
 
   return (
@@ -101,7 +123,15 @@ export default component$(() => {
         </div>
       </section>
 
-      <NewJobModal open={modalOpen.value} onClose$={closeModal} onSubmit$={submitNewJob} />
+      <NewJobModal
+        open={modalOpen.value}
+        onClose$={closeModal}
+        onSubmit$={$(async (payload) => {
+          // store in signal and call zero-arg handler
+          pendingJob.value = payload;
+          await submitNewJob();
+        })}
+      />
     </>
   );
 });

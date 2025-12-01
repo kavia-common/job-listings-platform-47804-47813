@@ -102,6 +102,26 @@ export const fetchJobs$: QRL<
 });
 
 /**
+ * Internal helper: normalize a job payload coming from UI.
+ * Avoid capturing external locals in QRLs by centralizing normalization here.
+ */
+export function normalizeJobInput(input: {
+  title: string;
+  company: string;
+  location: string;
+  type: JobType;
+  description: string;
+}): Omit<Job, "id" | "postedAt"> {
+  return {
+    title: input.title.trim(),
+    company: input.company.trim(),
+    location: input.location.trim(),
+    type: input.type,
+    description: input.description.trim(),
+  };
+}
+
+/**
  * PUBLIC_INTERFACE
  * Post a new job. This uses API if VITE_API_BASE is set, otherwise simulates success.
  * Returns the created job (with generated id if needed).
@@ -142,4 +162,22 @@ export const postJob$: QRL<
   } catch {
     return newJob;
   }
+});
+
+/**
+ * PUBLIC_INTERFACE
+ * QRL-friendly delegator that accepts raw UI input and posts a job.
+ * This keeps normalization within the QRL boundary without capturing locals in routes.
+ */
+export const postJobFromUi$: QRL<
+  (input: {
+    title: string;
+    company: string;
+    location: string;
+    type: JobType;
+    description: string;
+  }) => Promise<Job>
+> = $(async (input) => {
+  const normalized = normalizeJobInput(input);
+  return postJob$(normalized);
 });
