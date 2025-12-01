@@ -1,6 +1,6 @@
 {
   "name": "my-qwik-basic-starter",
-  "description": "Demo app with sample routes",
+  "description": "Ocean Professional themed job board frontend (Qwik)",
   "engines": {
     "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
   },
