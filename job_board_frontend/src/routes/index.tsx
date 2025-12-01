@@ -3,19 +3,29 @@ import {
   useSignal,
   useVisibleTask$,
   $,
+  type QRL,
 } from "@builder.io/qwik";
 import type { DocumentHead } from "@builder.io/qwik-city";
 import Header from "~/components/Header";
 import FilterSidebar, { type FilterState } from "~/components/FilterSidebar";
 import JobCard from "~/components/JobCard";
 import NewJobModal from "~/components/NewJobModal";
-import { fetchJobs$, setPendingJobFromUi$, postJobFromUi$, type Job } from "~/services/jobs";
+import {
+  fetchJobs$,
+  setPendingJobFromUi$,
+  postJobFromUi$,
+  type Job,
+} from "~/services/jobs";
 
 // PUBLIC_INTERFACE
 export default component$(() => {
   const jobs = useSignal<Job[]>([]);
   const filtered = useSignal<Job[]>([]);
-  const filters = useSignal<FilterState>({ keyword: "", location: "", type: "" });
+  const filters = useSignal<FilterState>({
+    keyword: "",
+    location: "",
+    type: "",
+  });
   const modalOpen = useSignal<boolean>(false);
   const loading = useSignal<boolean>(true);
 
@@ -26,7 +36,12 @@ export default component$(() => {
       fetchJobs$()
         .then((data) => {
           jobs.value = data;
-          filtered.value = applyFilters(data, filters.value);
+          // derive filtered list using serializable snapshot of filters
+          filtered.value = applyFilters(data, {
+            keyword: filters.value.keyword,
+            location: filters.value.location,
+            type: filters.value.type,
+          });
           loading.value = false;
         })
         .catch(() => {
@@ -35,11 +50,28 @@ export default component$(() => {
     });
   });
 
-  const onFiltersChanged = $((value: FilterState) => {
-    filters.value = value;
-    filtered.value = applyFilters(jobs.value, value);
-  });
+  // Handler accepts a plain value to avoid capturing the outer signal object
+  const onFiltersChanged: QRL<(value: FilterState) => void> = $(
+    (value: FilterState) => {
+      // write new value
+      filters.value = {
+        keyword: value.keyword,
+        location: value.location,
+        type: value.type,
+      };
+      // compute filtered list based on serializable values, not signal refs
+      filtered.value = applyFilters(
+        jobs.value.slice(),
+        {
+          keyword: value.keyword,
+          location: value.location,
+          type: value.type,
+        },
+      );
+    },
+  );
 
+  // Zero-arg open/close handlers that touch only their own signals
   const openModal = $(() => {
     modalOpen.value = true;
   });
@@ -50,8 +82,14 @@ export default component$(() => {
   // Zero-arg submit handler which posts from a global pending store to avoid capturing locals.
   const submitNewJob = $(async () => {
     const created = await postJobFromUi$();
-    jobs.value = [created, ...jobs.value];
-    filtered.value = applyFilters(jobs.value, filters.value);
+    // update lists using serializable snapshots to prevent accidental captures
+    const nextJobs = [created, ...jobs.value];
+    jobs.value = nextJobs;
+    filtered.value = applyFilters(nextJobs, {
+      keyword: filters.value.keyword,
+      location: filters.value.location,
+      type: filters.value.type,
+    });
   });
 
   return (
@@ -87,7 +125,8 @@ export default component$(() => {
                 <div
                   class="grid"
                   style={{
-                    gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+                    gridTemplateColumns:
+                      "repeat(auto-fill, minmax(260px, 1fr))",
                   }}
                 >
                   {filtered.value.map((job) => (

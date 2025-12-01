@@ -16,6 +16,7 @@ export interface Job {
   postedAt: string; // ISO date
 }
 
+// Use a constant mock list that does not depend on runtime locals
 const MOCK_JOBS: Job[] = [
   {
     id: "1",
@@ -77,8 +78,8 @@ export const fetchJobs$: QRL<
   const base = getApiBase();
   const url = `${base}/api/jobs`;
   try {
-    // If base is empty, skip network and return mocks
     if (!base) {
+      // mock mode
       return MOCK_JOBS;
     }
     const res = await fetch(url, { signal });
@@ -86,7 +87,6 @@ export const fetchJobs$: QRL<
       return MOCK_JOBS;
     }
     const data = (await res.json()) as any[];
-    // Normalize to Job[]
     return (data || []).map((j, idx) => ({
       id: String(j.id ?? idx),
       title: String(j.title ?? "Untitled Role"),
@@ -96,7 +96,7 @@ export const fetchJobs$: QRL<
       description: String(j.description ?? ""),
       postedAt: String(j.postedAt ?? new Date().toISOString()),
     }));
-  } catch (_e) {
+  } catch {
     return MOCK_JOBS;
   }
 });
@@ -106,6 +106,7 @@ export const fetchJobsQrl = fetchJobs$;
  * Internal helper: normalize a job payload coming from UI.
  * Avoid capturing external locals in QRLs by centralizing normalization here.
  */
+// PUBLIC_INTERFACE
 export function normalizeJobInput(input: {
   title: string;
   company: string;
@@ -172,19 +173,13 @@ export const postJobQrl = postJob$;
  * This keeps normalization within the QRL boundary without capturing locals in routes.
  */
 export const postJobFromUi$: QRL<() => Promise<Job>> = $(async () => {
-  // Read from the global pending store to avoid capturing local identifiers
   if (!__pendingJob) {
     throw new Error("No pending job available");
   }
-  const normalized = {
-    title: __pendingJob.title.trim(),
-    company: __pendingJob.company.trim(),
-    location: __pendingJob.location.trim(),
-    type: __pendingJob.type,
-    description: __pendingJob.description.trim(),
-  } as Omit<Job, "id" | "postedAt">;
+  // stash and clear before use; avoid capturing a local 'normalized' binding
+  const pending = __pendingJob;
   __pendingJob = null;
-  return postJob$(normalized);
+  return postJob$(normalizeJobInput(pending));
 });
 export const postJobFromUiQrl = postJobFromUi$;
 
@@ -223,13 +218,32 @@ export const setPendingJobFromUi$: QRL<
 export const setPendingJobFromUiQrl = setPendingJobFromUi$;
 
 // PUBLIC_INTERFACE
-export const postJobFromPending$: QRL<() => Promise<Job>> = $(async () => {
+/**
+ * PUBLIC_INTERFACE
+ * Helper QRL to extract and clear the pending job without capturing locals.
+ */
+export const takeNormalizedPendingJob$: QRL<() => Omit<Job, "id" | "postedAt">> = $(() => {
   if (!__pendingJob) {
     throw new Error("No pending job available");
   }
-  const normalized = normalizeJobInput(__pendingJob);
-  // Clear immediately to avoid re-use
+  const result = normalizeJobInput(__pendingJob);
   __pendingJob = null;
-  return postJob$(normalized);
+  return result;
+});
+export const takeNormalizedPendingJobQrl = takeNormalizedPendingJob$;
+
+// PUBLIC_INTERFACE
+export const postJobFromPending$: QRL<() => Promise<Job>> = $(async () => {
+  // Perform extraction/clear without introducing local variable identifiers
+  return postJob$(
+    (() => {
+      if (!__pendingJob) {
+        throw new Error("No pending job available");
+      }
+      const _payload = normalizeJobInput(__pendingJob);
+      __pendingJob = null;
+      return _payload;
+    })(),
+  );
 });
 export const postJobFromPendingQrl = postJobFromPending$;
