@@ -3,14 +3,13 @@ import {
   useSignal,
   useVisibleTask$,
   $,
-  type QRL,
 } from "@builder.io/qwik";
 import type { DocumentHead } from "@builder.io/qwik-city";
 import Header from "~/components/Header";
 import FilterSidebar, { type FilterState } from "~/components/FilterSidebar";
 import JobCard from "~/components/JobCard";
 import NewJobModal from "~/components/NewJobModal";
-import { fetchJobs$, postJobFromUi$, type Job } from "~/services/jobs";
+import { fetchJobs$, setPendingJobFromUi$, postJobFromUi$, type Job } from "~/services/jobs";
 
 // PUBLIC_INTERFACE
 export default component$(() => {
@@ -19,25 +18,10 @@ export default component$(() => {
   const filters = useSignal<FilterState>({ keyword: "", location: "", type: "" });
   const modalOpen = useSignal<boolean>(false);
   const loading = useSignal<boolean>(true);
-  // Holds the most recent job submission payload in a serializable store
-  const pendingJob = useSignal<{
-    title: string;
-    company: string;
-    location: string;
-    type: Job["type"];
-    description: string;
-  } | null>(null);
-
-  // QRL helpers to read/write without capturing the signal identifier in other QRLs
-  const getPendingJob = $(() => pendingJob.value);
-  const clearPendingJob = $(() => {
-    pendingJob.value = null;
-  });
 
   // Load jobs with mock fallback when needed
   useVisibleTask$(() => {
     loading.value = true;
-    // Derive data within this task without capturing non-serializable locals
     queueMicrotask(() => {
       fetchJobs$()
         .then((data) => {
@@ -63,18 +47,11 @@ export default component$(() => {
     modalOpen.value = false;
   });
 
-  // Handler is wrapped in $() and derives any needed values within the QRL.
-  // It calls the service QRL postJob$ with the data provided by the caller (NewJobModal),
-  // avoiding capturing any external "payload" object directly in the closure.
-  const submitNewJob: QRL<() => Promise<void>> = $(async () => {
-    const current = await getPendingJob();
-    if (!current) return;
-
-    const created = await postJobFromUi$(current);
+  // Zero-arg submit handler which posts from a global pending store to avoid capturing locals.
+  const submitNewJob = $(async () => {
+    const created = await postJobFromUi$();
     jobs.value = [created, ...jobs.value];
     filtered.value = applyFilters(jobs.value, filters.value);
-
-    await clearPendingJob();
   });
 
   return (
@@ -126,11 +103,8 @@ export default component$(() => {
       <NewJobModal
         open={modalOpen.value}
         onClose$={closeModal}
-        onSubmit$={$(async (payload) => {
-          // store in signal and call zero-arg handler
-          pendingJob.value = payload;
-          await submitNewJob();
-        })}
+        onSubmit$={setPendingJobFromUi$}
+        onAfterSubmit$={submitNewJob}
       />
     </>
   );

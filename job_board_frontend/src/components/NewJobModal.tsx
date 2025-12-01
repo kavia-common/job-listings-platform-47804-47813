@@ -15,13 +15,14 @@ interface Props {
   onSubmit$: PropFunction<
     (payload: Omit<FormState, "type"> & { type: JobType }) => Promise<void>
   >;
+  onAfterSubmit$?: PropFunction<() => Promise<void> | void>;
 }
 
 /**
  * PUBLIC_INTERFACE
  * Modal dialog for posting a new job with client-side required field validation.
  */
-export default component$<Props>(({ open, onClose$, onSubmit$ }) => {
+export default component$<Props>(({ open, onClose$, onSubmit$, onAfterSubmit$ }) => {
   const form = useSignal<FormState>({
     title: "",
     company: "",
@@ -50,6 +51,9 @@ export default component$<Props>(({ open, onClose$, onSubmit$ }) => {
       type: form.value.type as JobType,
       description: form.value.description.trim(),
     });
+    if (onAfterSubmit$) {
+      await onAfterSubmit$();
+    }
     await resetAndClose();
   });
 

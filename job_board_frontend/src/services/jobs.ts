@@ -100,6 +100,7 @@ export const fetchJobs$: QRL<
     return MOCK_JOBS;
   }
 });
+export const fetchJobsQrl = fetchJobs$;
 
 /**
  * Internal helper: normalize a job payload coming from UI.
@@ -163,21 +164,72 @@ export const postJob$: QRL<
     return newJob;
   }
 });
+export const postJobQrl = postJob$;
 
 /**
  * PUBLIC_INTERFACE
  * QRL-friendly delegator that accepts raw UI input and posts a job.
  * This keeps normalization within the QRL boundary without capturing locals in routes.
  */
-export const postJobFromUi$: QRL<
+export const postJobFromUi$: QRL<() => Promise<Job>> = $(async () => {
+  // Read from the global pending store to avoid capturing local identifiers
+  if (!__pendingJob) {
+    throw new Error("No pending job available");
+  }
+  const normalized = {
+    title: __pendingJob.title.trim(),
+    company: __pendingJob.company.trim(),
+    location: __pendingJob.location.trim(),
+    type: __pendingJob.type,
+    description: __pendingJob.description.trim(),
+  } as Omit<Job, "id" | "postedAt">;
+  __pendingJob = null;
+  return postJob$(normalized);
+});
+export const postJobFromUiQrl = postJobFromUi$;
+
+/**
+ * PUBLIC_INTERFACE
+ * Global pending job store and QRL helpers to avoid capturing locals.
+ */
+let __pendingJob:
+  | {
+      title: string;
+      company: string;
+      location: string;
+      type: JobType;
+      description: string;
+    }
+  | null = null;
+
+// PUBLIC_INTERFACE
+export const setPendingJobFromUi$: QRL<
   (input: {
     title: string;
     company: string;
     location: string;
     type: JobType;
     description: string;
-  }) => Promise<Job>
-> = $(async (input) => {
-  const normalized = normalizeJobInput(input);
+  }) => void
+> = $((input) => {
+  __pendingJob = {
+    title: input.title,
+    company: input.company,
+    location: input.location,
+    type: input.type,
+    description: input.description,
+  };
+});
+export const setPendingJobFromUiQrl = setPendingJobFromUi$;
+
+// PUBLIC_INTERFACE
+export const postJobFromPending$: QRL<() => Promise<Job>> = $(async () => {
+  if (!__pendingJob) {
+    throw new Error("No pending job available");
+  }
+  const normalized = normalizeJobInput(__pendingJob);
+  // Clear immediately to avoid re-use
+  __pendingJob = null;
   return postJob$(normalized);
 });
+export const postJobFromPendingQrl = postJobFromPending$;
