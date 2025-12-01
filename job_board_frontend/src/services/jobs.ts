@@ -103,10 +103,10 @@ export const fetchJobs$: QRL<
 export const fetchJobsQrl = fetchJobs$;
 
 /**
+ * PUBLIC_INTERFACE
  * Internal helper: normalize a job payload coming from UI.
  * Avoid capturing external locals in QRLs by centralizing normalization here.
  */
-// PUBLIC_INTERFACE
 export function normalizeJobInput(input: {
   title: string;
   company: string;
@@ -169,35 +169,28 @@ export const postJobQrl = postJob$;
 
 /**
  * PUBLIC_INTERFACE
- * QRL-friendly delegator that accepts raw UI input and posts a job.
- * This keeps normalization within the QRL boundary without capturing locals in routes.
+ * Global pending job store and QRL helpers to avoid capturing locals.
  */
-export const postJobFromUi$: QRL<() => Promise<Job>> = $(async () => {
-  if (!__pendingJob) {
-    throw new Error("No pending job available");
-  }
-  // stash and clear before use; avoid capturing a local 'normalized' binding
-  const pending = __pendingJob;
-  __pendingJob = null;
-  return postJob$(normalizeJobInput(pending));
-});
-export const postJobFromUiQrl = postJobFromUi$;
+/**
+ * Use a wrapper object to avoid ESM import reassignment issues in transformed QRL chunks.
+ * Mutate the .value property instead of reassigning the binding itself.
+ */
+const PendingStore: {
+  value:
+    | {
+        title: string;
+        company: string;
+        location: string;
+        type: JobType;
+        description: string;
+      }
+    | null;
+} = { value: null };
 
 /**
  * PUBLIC_INTERFACE
- * Global pending job store and QRL helpers to avoid capturing locals.
+ * Set the global pending job using raw UI input.
  */
-let __pendingJob:
-  | {
-      title: string;
-      company: string;
-      location: string;
-      type: JobType;
-      description: string;
-    }
-  | null = null;
-
-// PUBLIC_INTERFACE
 export const setPendingJobFromUi$: QRL<
   (input: {
     title: string;
@@ -207,7 +200,7 @@ export const setPendingJobFromUi$: QRL<
     description: string;
   }) => void
 > = $((input) => {
-  __pendingJob = {
+  PendingStore.value = {
     title: input.title,
     company: input.company,
     location: input.location,
@@ -217,33 +210,42 @@ export const setPendingJobFromUi$: QRL<
 });
 export const setPendingJobFromUiQrl = setPendingJobFromUi$;
 
-// PUBLIC_INTERFACE
 /**
  * PUBLIC_INTERFACE
- * Helper QRL to extract and clear the pending job without capturing locals.
+ * Zero-arg QRL that returns the normalized pending job and clears the store.
+ * This avoids introducing any local identifier inside the $ closure.
  */
-export const takeNormalizedPendingJob$: QRL<() => Omit<Job, "id" | "postedAt">> = $(() => {
-  if (!__pendingJob) {
-    throw new Error("No pending job available");
-  }
-  const result = normalizeJobInput(__pendingJob);
-  __pendingJob = null;
-  return result;
-});
-export const takeNormalizedPendingJobQrl = takeNormalizedPendingJob$;
+export const getAndClearPendingJob$: QRL<() => Omit<Job, "id" | "postedAt">> = $(
+  () => {
+    if (!PendingStore.value) {
+      throw new Error("No pending job available");
+    }
+    // Derive the normalized result directly and then clear the store
+    const result = normalizeJobInput(PendingStore.value);
+    PendingStore.value = null;
+    return result;
+  },
+);
+// Also export the QRL alias expected by tooling
+export const getAndClearPendingJobQrl = getAndClearPendingJob$;
 
-// PUBLIC_INTERFACE
-export const postJobFromPending$: QRL<() => Promise<Job>> = $(async () => {
-  // Perform extraction/clear without introducing local variable identifiers
-  return postJob$(
-    (() => {
-      if (!__pendingJob) {
-        throw new Error("No pending job available");
-      }
-      const _payload = normalizeJobInput(__pendingJob);
-      __pendingJob = null;
-      return _payload;
-    })(),
-  );
+/**
+ * PUBLIC_INTERFACE
+ * QRL-friendly delegator that posts a job using the pending UI input.
+ * Chains through getAndClearPendingJob$ to avoid local bindings in this closure.
+ */
+export const postJobFromUi$: QRL<() => Promise<Job>> = $(() => {
+  // Use Promise chaining to avoid async/await and any local captures
+  return getAndClearPendingJob$().then((payload) => postJob$(payload));
+});
+export const postJobFromUiQrl = postJobFromUi$;
+
+/**
+ * PUBLIC_INTERFACE
+ * Posts a job by extracting the pending job and clearing it, without capturing locals.
+ */
+export const postJobFromPending$: QRL<() => Promise<Job>> = $(() => {
+  // Same zero-arg flow using Promise chaining to avoid top-level await in output chunks
+  return getAndClearPendingJob$().then((payload) => postJob$(payload));
 });
 export const postJobFromPendingQrl = postJobFromPending$;
