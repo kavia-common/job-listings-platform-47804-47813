@@ -214,29 +214,51 @@ export const setPendingJobFromUiQrl = setPendingJobFromUi$;
  * PUBLIC_INTERFACE
  * Zero-arg QRL that returns the normalized pending job and clears the store.
  * This avoids introducing any local identifier inside the $ closure.
+ *
+ * Safe no-op behavior: if there is no pending job, return a rejected Promise
+ * to avoid runtime throws during SSR or event replay. We implement this as a
+ * zero-arg function that returns a Promise via direct Promise.reject without
+ * capturing locals.
  */
-export const getAndClearPendingJob$: QRL<() => Omit<Job, "id" | "postedAt">> = $(
+export const getAndClearPendingJob$: QRL<() => Promise<Omit<Job, "id" | "postedAt">>> = $(
   () => {
-    if (!PendingStore.value) {
-      throw new Error("No pending job available");
-    }
-    // Derive the normalized result directly and then clear the store
-    const result = normalizeJobInput(PendingStore.value);
+    // Read and clear synchronously without temporary local variables
+    const hasValue = !!PendingStore.value;
+    // Derive payload first if present, then clear the store
+    const payload = hasValue ? normalizeJobInput(PendingStore.value as any) : null;
     PendingStore.value = null;
-    return result;
+
+    // Return via Promise API to avoid async/await locals
+    return hasValue
+      ? Promise.resolve(payload as Omit<Job, "id" | "postedAt">)
+      : Promise.reject(new Error("No pending job available"));
   },
 );
-// Also export the QRL alias expected by tooling
+// Companion QRL export
 export const getAndClearPendingJobQrl = getAndClearPendingJob$;
 
 /**
  * PUBLIC_INTERFACE
  * QRL-friendly delegator that posts a job using the pending UI input.
- * Chains through getAndClearPendingJob$ to avoid local bindings in this closure.
+ * Uses Promise chaining and avoids local temporary variables inside the closure.
  */
+/**
+ * PUBLIC_INTERFACE
+ * Static pipeline to post the pending job without capturing locals inside the $ closure.
+ * It composes using Promise.then with a top-level named function that has zero args,
+ * so Qwik optimizer will not treat it as capturing closure state.
+ */
+/**
+ * Helper that posts the current pending job without introducing args in QRL closures.
+ * Defined at module scope so Qwik doesn't treat it as a captured variable.
+ */
+function postPendingNoArgs(): Promise<Job> {
+  // Avoid inline arrow param in QRL scope by performing the chaining here
+  return getAndClearPendingJob$().then(postJob$ as unknown as (p: any) => Promise<Job>);
+}
 export const postJobFromUi$: QRL<() => Promise<Job>> = $(() => {
-  // Use Promise chaining to avoid async/await and any local captures
-  return getAndClearPendingJob$().then((payload) => postJob$(payload));
+  // Zero-arg call into the module-level helper; no locals introduced here
+  return postPendingNoArgs();
 });
 export const postJobFromUiQrl = postJobFromUi$;
 
@@ -245,7 +267,6 @@ export const postJobFromUiQrl = postJobFromUi$;
  * Posts a job by extracting the pending job and clearing it, without capturing locals.
  */
 export const postJobFromPending$: QRL<() => Promise<Job>> = $(() => {
-  // Same zero-arg flow using Promise chaining to avoid top-level await in output chunks
-  return getAndClearPendingJob$().then((payload) => postJob$(payload));
+  return postPendingNoArgs();
 });
 export const postJobFromPendingQrl = postJobFromPending$;
